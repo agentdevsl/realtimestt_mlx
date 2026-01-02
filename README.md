@@ -8,6 +8,8 @@
 
 *Easy-to-use, low-latency speech-to-text library for realtime applications*
 
+> 🎤 **macOS + Claude Code?** See **[QUICKSTART.md](QUICKSTART.md)** - Voice control for Claude Code on Apple Silicon in 3 steps!
+
 > ❗ **Project Status: Community-Driven**
 > 
 > This project is no longer being actively maintained by me due to time constraints. I've taken on too many projects and I have to step back. I will no longer be implementing new features or providing user support.
