@@ -215,8 +215,6 @@ def main():
 
         recorder = AudioToTextRecorder(
             spinner=True,
-            post_speech_silence_duration=0.4,
-            min_length_of_recording=0.3,
         )
 
         print("\nVoice control ready!")
