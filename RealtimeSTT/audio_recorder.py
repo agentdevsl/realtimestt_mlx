@@ -114,8 +114,6 @@ PARAKEET_MODELS = {
     'parakeet-tdt': 'mlx-community/parakeet-tdt-0.6b-v3',
     'parakeet': 'mlx-community/parakeet-tdt-0.6b-v3',
     'mlx-community/parakeet-tdt-0.6b-v3': 'mlx-community/parakeet-tdt-0.6b-v3',
-    # Keep v2 for backwards compatibility
-    'mlx-community/parakeet-tdt-0.6b-v2': 'mlx-community/parakeet-tdt-0.6b-v2',
 }
 
 

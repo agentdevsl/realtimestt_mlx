@@ -26,6 +26,9 @@ import signal
 # Wake phrases that trigger Claude
 WAKE_PHRASES = ["claude", "hey claude", "ok claude", "hi claude"]
 
+# How long to keep listening after wake word (seconds)
+LISTEN_DURATION = 40
+
 
 def find_claude_binary() -> str:
     """Find the claude binary path."""
@@ -213,8 +216,9 @@ def main():
 
         print("\nVoice control ready!")
         print("\nHow to use:")
-        print('  - Type normally to interact with Claude')
-        print('  - Say "Claude" followed by your request for voice input')
+        print('  - Say "Claude" to activate voice mode')
+        print(f'  - Keep talking - stays active until {LISTEN_DURATION}s of silence')
+        print('  - Type normally for keyboard input')
         print('  - Say "Claude exit" or press Ctrl+C to quit')
         print("\n" + "=" * 60)
 
@@ -226,9 +230,18 @@ def main():
         import time
         time.sleep(1)
 
-        listening_for_command = False
+        listening_mode = False
+        listen_until = 0
 
         while session.running:
+            current_time = time.time()
+
+            # Check if listening mode expired (40s of silence)
+            if listening_mode and current_time > listen_until:
+                listening_mode = False
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                print("\n[🔇 Deactivated after silence - say 'Claude' to reactivate]")
+
             # Non-blocking voice check
             text = recorder.text()
 
@@ -237,7 +250,6 @@ def main():
 
             # Restore terminal briefly to print
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-            print(f"\n[Voice heard: {text}]")
 
             # Check for exit
             if "exit" in text.lower() and "claude" in text.lower():
@@ -245,19 +257,30 @@ def main():
                 session.stop()
                 break
 
+            # Check for wake word
             command = extract_command(text)
 
             if command is not None:
+                # Wake word detected - enter/extend listening mode
+                listen_until = current_time + LISTEN_DURATION
+                listening_mode = True
+
                 if command:
-                    print(f"[Voice command: {command}]")
+                    # Wake word + command in same utterance
+                    print(f"\n[🎤 Active] {command}")
                     session.send_command(command)
                 else:
-                    print("[Listening for command...]")
-                    listening_for_command = True
-            elif listening_for_command:
-                print(f"[Voice command: {text}]")
+                    # Just wake word - waiting for command
+                    print(f"\n[🎤 Activated - listening...]")
+            elif listening_mode:
+                # In listening mode - send any speech as command
+                print(f"\n[🎤 Active] {text}")
                 session.send_command(text)
-                listening_for_command = False
+                # Reset timer on each utterance (40s of silence to deactivate)
+                listen_until = current_time + LISTEN_DURATION
+            else:
+                # Not in listening mode and no wake word
+                print(f"\n[Heard: {text}] (say 'Claude' to activate)")
 
     except KeyboardInterrupt:
         print("\n\n[Exiting...]")
