@@ -192,6 +192,59 @@ class ClaudeInteractiveSession:
                 pass
 
 
+class VoiceHandler:
+    """Handles voice input with wake word detection."""
+
+    def __init__(self, session):
+        self.session = session
+        self.listening_mode = False
+        self.listen_until = 0
+        self.lock = threading.Lock()
+
+    def process_text(self, text: str):
+        """Callback for processing transcribed text."""
+        import time
+
+        if not text.strip():
+            return
+
+        current_time = time.time()
+
+        with self.lock:
+            # Check if listening mode expired
+            if self.listening_mode and current_time > self.listen_until:
+                self.listening_mode = False
+                print("\n[🔇 Deactivated - say 'Claude' to reactivate]")
+
+            # Check for exit
+            if "exit" in text.lower() and "claude" in text.lower():
+                print("\n[Voice: Exiting...]")
+                self.session.stop()
+                return
+
+            # Check for wake word
+            command = extract_command(text)
+
+            if command is not None:
+                # Wake word detected - enter/extend listening mode
+                self.listen_until = current_time + LISTEN_DURATION
+                self.listening_mode = True
+
+                if command:
+                    print(f"\n[🎤 Active] {command}")
+                    self.session.send_command(command)
+                else:
+                    print(f"\n[🎤 Activated - listening...]")
+            elif self.listening_mode:
+                # In listening mode - send any speech as command
+                print(f"\n[🎤 Active] {text}")
+                self.session.send_command(text)
+                self.listen_until = current_time + LISTEN_DURATION
+            else:
+                # Not in listening mode and no wake word
+                print(f"\n[Heard: {text}] (say 'Claude' to activate)")
+
+
 def main():
     print("=" * 60)
     print("Voice-Activated Claude Code (Interactive PTY Mode)")
@@ -207,22 +260,19 @@ def main():
     print("\nInitializing voice recognition...")
 
     session = None
-    old_settings = None
+    recorder = None
 
     try:
-        # Save terminal settings before any modifications
-        old_settings = termios.tcgetattr(sys.stdin)
-
         recorder = AudioToTextRecorder(
-            spinner=True,
-            language="en",  # Optimize for English (skip language detection)
+            spinner=False,  # Disable spinner to avoid terminal conflicts
+            language="en",
         )
 
         print("\nVoice control ready!")
         print("\nHow to use:")
         print('  - Say "Claude" to activate voice mode')
         print(f'  - Keep talking - stays active until {LISTEN_DURATION}s of silence')
-        print('  - Type normally for keyboard input')
+        print('  - Type normally for keyboard input (works simultaneously)')
         print('  - Say "Claude exit" or press Ctrl+C to quit')
         print("\n" + "=" * 60)
 
@@ -234,57 +284,12 @@ def main():
         import time
         time.sleep(1)
 
-        listening_mode = False
-        listen_until = 0
+        # Create voice handler
+        voice_handler = VoiceHandler(session)
 
+        # Use callback-based voice processing (non-blocking)
         while session.running:
-            current_time = time.time()
-
-            # Check if listening mode expired (40s of silence)
-            if listening_mode and current_time > listen_until:
-                listening_mode = False
-                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-                print("\n[🔇 Deactivated after silence - say 'Claude' to reactivate]")
-
-            # Non-blocking voice check
-            text = recorder.text()
-
-            if not text.strip():
-                continue
-
-            # Restore terminal briefly to print
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-
-            # Check for exit
-            if "exit" in text.lower() and "claude" in text.lower():
-                print("\n[Voice: Exiting...]")
-                session.stop()
-                break
-
-            # Check for wake word
-            command = extract_command(text)
-
-            if command is not None:
-                # Wake word detected - enter/extend listening mode
-                listen_until = current_time + LISTEN_DURATION
-                listening_mode = True
-
-                if command:
-                    # Wake word + command in same utterance
-                    print(f"\n[🎤 Active] {command}")
-                    session.send_command(command)
-                else:
-                    # Just wake word - waiting for command
-                    print(f"\n[🎤 Activated - listening...]")
-            elif listening_mode:
-                # In listening mode - send any speech as command
-                print(f"\n[🎤 Active] {text}")
-                session.send_command(text)
-                # Reset timer on each utterance (40s of silence to deactivate)
-                listen_until = current_time + LISTEN_DURATION
-            else:
-                # Not in listening mode and no wake word
-                print(f"\n[Heard: {text}] (say 'Claude' to activate)")
+            recorder.text(voice_handler.process_text)
 
     except KeyboardInterrupt:
         print("\n\n[Exiting...]")
@@ -295,13 +300,11 @@ def main():
     finally:
         if session:
             session.stop()
-        # Restore terminal settings
-        if old_settings:
+        if recorder:
             try:
-                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                recorder.shutdown()
             except:
                 pass
-        # Reset terminal to sane state
         reset_terminal()
 
 
