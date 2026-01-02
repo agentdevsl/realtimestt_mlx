@@ -1,7 +1,6 @@
 .gitignore
 _open_cmd.bat
 docs/
-examples/
 batch/
 test_env/
 tests_private/
