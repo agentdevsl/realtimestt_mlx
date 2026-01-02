@@ -82,7 +82,7 @@ if __name__ == '__main__':
 
 ### Voice-Activated Claude Code
 
-Control [Claude Code](https://claude.ai/code) hands-free using voice commands. Speech is transcribed locally on your Mac using Parakeet MLX, then sent to Claude Code's interactive CLI.
+Control [Claude Code](https://claude.ai/code) hands-free using voice commands. Speech is transcribed locally on your Mac using [Parakeet MLX v3](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3), then sent to Claude Code's interactive CLI.
 
 #### Quick Start
 
@@ -95,13 +95,14 @@ Control [Claude Code](https://claude.ai/code) hands-free using voice commands. S
 
 1. **Local Speech-to-Text**: Your voice is transcribed on-device using Parakeet MLX (no audio sent to external servers)
 2. **Wake Word Activation**: Say "Claude", "Opus", "Sonnet", or "Haiku" to activate
-3. **Interactive CLI**: Full Claude Code interface with keyboard + voice input
-4. **PTY Integration**: Uses pseudo-terminal for proper CLI rendering
+3. **40s Listening Mode**: Stay active while talking - deactivates after 40s of silence
+4. **Simultaneous Input**: Type and talk at the same time - both work together
+5. **PTY Integration**: Uses pseudo-terminal for full Claude CLI rendering
 
 #### Usage
 
 ```
-Activate with any wake word: "Claude", "Opus", "Sonnet", or "Haiku"
+Wake words: "Claude", "Opus", "Sonnet", "Haiku" (or "Hey/Ok" variants)
 
 Examples:
   "Claude, what files are in this directory?"
@@ -109,15 +110,20 @@ Examples:
   "Hey Sonnet, help me write a test"
   "Haiku, summarize this file"
 
+Keep talking - stays active until 40s of silence
+Type normally while voice is active - both work simultaneously
 Say "Claude exit" or press Ctrl+C to quit
 ```
 
 #### Features
 
-- **Hybrid Input**: Use keyboard and voice interchangeably
+- **Simultaneous Input**: Keyboard and voice work together in real-time
+- **Continuous Listening**: 40s timeout resets with each utterance
+- **Multiple Wake Words**: Claude, Opus, Sonnet, Haiku (all model names)
 - **Full CLI**: Complete Claude Code interface with proper terminal rendering
-- **Privacy**: Voice transcription happens locally on your Mac
-- **Low Latency**: Parakeet MLX provides sub-second transcription
+- **Privacy**: Voice transcription happens 100% locally on your Mac
+- **Low Latency**: Parakeet MLX v3 provides sub-second transcription
+- **English Optimized**: Configured for English for faster processing
 
 > **Note**: Requires Apple Silicon Mac (M1/M2/M3/M4) and Claude Code CLI installed.
 
