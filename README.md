@@ -16,6 +16,8 @@
 
 ## New
 
+- 🎤 **Default model changed to [Parakeet MLX v3](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3)** for improved performance on Mac - 50-100x faster than real-time, sub-second latency
+- 🗣️ **Voice-activated Claude Code** - hands-free control via `./examples/start_voice_interactive.sh`
 - AudioToTextRecorderClient class, which automatically starts a server if none is running and connects to it. The class shares the same interface as AudioToTextRecorder, making it easy to upgrade or switch between the two. (Work in progress, most parameters and callbacks of AudioToTextRecorder are already implemented into AudioToTextRecorderClient, but not all. Also the server can not handle concurrent (parallel) requests yet.)
 - reworked CLI interface ("stt-server" to start the server, "stt" to start the client, look at "server" folder for more info)
 
