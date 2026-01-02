@@ -215,6 +215,7 @@ def main():
 
         recorder = AudioToTextRecorder(
             spinner=True,
+            language="en",  # Optimize for English (skip language detection)
         )
 
         print("\nVoice control ready!")
