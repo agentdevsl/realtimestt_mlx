@@ -46,6 +46,7 @@ import threading
 import webrtcvad
 import datetime
 import platform
+import tempfile
 import logging
 import struct
 import base64
@@ -58,6 +59,16 @@ import os
 import re
 import gc
 
+# Optional MLX imports for Apple Silicon support
+try:
+    import mlx.core as mx
+    from parakeet_mlx import from_pretrained as parakeet_from_pretrained
+    MLX_AVAILABLE = True
+except ImportError:
+    MLX_AVAILABLE = False
+    mx = None
+    parakeet_from_pretrained = None
+
 # Named logger for this module.
 logger = logging.getLogger("realtimestt")
 logger.propagate = False
@@ -65,8 +76,15 @@ logger.propagate = False
 # Set OpenMP runtime duplicate library handling to OK (Use only for development!)
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
-INIT_MODEL_TRANSCRIPTION = "mlx-community/parakeet-tdt-0.6b-v3"
-INIT_MODEL_TRANSCRIPTION_REALTIME = "mlx-community/parakeet-tdt-0.6b-v3"
+# Default models - use Parakeet MLX on Apple Silicon for best performance
+# For Apple Silicon: 'parakeet' uses MLX acceleration via Metal
+# For other platforms: use faster-whisper compatible models (tiny, base, small, medium, large-v1, large-v2, large-v3)
+if platform.system() == 'Darwin' and platform.machine() == 'arm64' and MLX_AVAILABLE:
+    INIT_MODEL_TRANSCRIPTION = "parakeet"
+    INIT_MODEL_TRANSCRIPTION_REALTIME = "parakeet"
+else:
+    INIT_MODEL_TRANSCRIPTION = "small"
+    INIT_MODEL_TRANSCRIPTION_REALTIME = "tiny"
 INIT_REALTIME_PROCESSING_PAUSE = 0.2
 INIT_REALTIME_INITIAL_PAUSE = 0.2
 INIT_SILERO_SENSITIVITY = 0.4
@@ -89,6 +107,168 @@ INT16_MAX_ABS_VALUE = 32768.0
 INIT_HANDLE_BUFFER_OVERFLOW = False
 if platform.system() != 'Darwin':
     INIT_HANDLE_BUFFER_OVERFLOW = True
+
+# Parakeet MLX model identifiers
+PARAKEET_MODELS = {
+    'parakeet-tdt-0.6b': 'mlx-community/parakeet-tdt-0.6b-v3',
+    'parakeet-tdt': 'mlx-community/parakeet-tdt-0.6b-v3',
+    'parakeet': 'mlx-community/parakeet-tdt-0.6b-v3',
+    'mlx-community/parakeet-tdt-0.6b-v3': 'mlx-community/parakeet-tdt-0.6b-v3',
+    # Keep v2 for backwards compatibility
+    'mlx-community/parakeet-tdt-0.6b-v2': 'mlx-community/parakeet-tdt-0.6b-v2',
+}
+
+
+def is_parakeet_model(model_name: str) -> bool:
+    """Check if the model name refers to a Parakeet MLX model."""
+    if not model_name:
+        return False
+    model_lower = model_name.lower()
+    return 'parakeet' in model_lower or model_lower in PARAKEET_MODELS
+
+
+def get_parakeet_model_id(model_name: str) -> str:
+    """Get the HuggingFace model ID for a Parakeet model name."""
+    model_lower = model_name.lower()
+    return PARAKEET_MODELS.get(model_lower, model_name)
+
+
+class ParakeetTranscriptionInfo:
+    """Mock info object to match faster_whisper's TranscriptionInfo interface."""
+    def __init__(self, language: str = "en", language_probability: float = 1.0, duration: float = 0.0):
+        self.language = language
+        self.language_probability = language_probability
+        self.duration = duration
+        self.duration_after_vad = duration
+        self.all_language_probs = [(language, language_probability)]
+
+
+class ParakeetSegment:
+    """Mock segment object to match faster_whisper's Segment interface."""
+    def __init__(self, text: str, start: float = 0.0, end: float = 0.0):
+        self.text = text
+        self.start = start
+        self.end = end
+        self.id = 0
+        self.seek = 0
+        self.tokens = []
+        self.temperature = 0.0
+        self.avg_logprob = 0.0
+        self.compression_ratio = 0.0
+        self.no_speech_prob = 0.0
+        self.words = []
+
+
+class ParakeetMLXWrapper:
+    """
+    Wrapper class that adapts the Parakeet MLX model to match the faster_whisper API.
+    This allows Parakeet models to be used as drop-in replacements for Whisper models.
+    """
+
+    def __init__(self, model_path: str, device: str = "cpu", compute_type: str = "default",
+                 device_index: int = 0, download_root: str = None):
+        """
+        Initialize the Parakeet MLX model wrapper.
+
+        Args:
+            model_path: The model name or HuggingFace model ID
+            device: Ignored for MLX (uses Metal automatically)
+            compute_type: Ignored for MLX
+            device_index: Ignored for MLX
+            download_root: Ignored for MLX (uses HuggingFace cache)
+        """
+        if not MLX_AVAILABLE:
+            raise RuntimeError("MLX is not available. Please install mlx and parakeet-mlx packages.")
+
+        model_id = get_parakeet_model_id(model_path)
+        logger.info(f"Loading Parakeet MLX model: {model_id}")
+
+        self.model = parakeet_from_pretrained(model_id)
+        self.model_path = model_path
+        self._sample_rate = 16000  # Parakeet expects 16kHz audio
+
+        logger.info(f"Parakeet MLX model loaded successfully: {model_id}")
+
+    def transcribe(self, audio, language: str = None, beam_size: int = 5,
+                   initial_prompt: str = None, suppress_tokens: list = None,
+                   batch_size: int = 16, vad_filter: bool = True, **kwargs):
+        """
+        Transcribe audio using the Parakeet MLX model.
+
+        This method mimics the faster_whisper transcribe API but uses Parakeet internally.
+
+        Args:
+            audio: Audio data as numpy array (float32, 16kHz) or path to audio file
+            language: Language code (currently ignored, Parakeet auto-detects)
+            beam_size: Ignored (Parakeet uses different decoding)
+            initial_prompt: Ignored (Parakeet doesn't support prompting)
+            suppress_tokens: Ignored
+            batch_size: Ignored
+            vad_filter: Ignored (Parakeet has its own VAD)
+            **kwargs: Additional arguments (ignored)
+
+        Returns:
+            Tuple of (segments_iterator, info) matching faster_whisper's output format
+        """
+        start_time = time.time()
+
+        # Handle different input types
+        if isinstance(audio, (str, os.PathLike)):
+            # Audio is a file path
+            audio_path = str(audio)
+            result = self.model.transcribe(audio_path)
+        elif isinstance(audio, np.ndarray):
+            # Audio is a numpy array - need to save to temp file
+            # Parakeet's transcribe() expects a file path
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+                temp_path = f.name
+            try:
+                # Ensure audio is the right format (float32, mono)
+                if audio.dtype != np.float32:
+                    audio = audio.astype(np.float32)
+                if len(audio.shape) > 1:
+                    audio = audio.mean(axis=1)  # Convert stereo to mono
+
+                sf.write(temp_path, audio, self._sample_rate)
+                result = self.model.transcribe(temp_path)
+            finally:
+                # Clean up temp file
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+        else:
+            raise TypeError(f"Unsupported audio type: {type(audio)}")
+
+        elapsed = time.time() - start_time
+
+        # Extract text from result
+        text = result.text if hasattr(result, 'text') else str(result)
+
+        # Create segments and info to match faster_whisper API
+        duration = len(audio) / self._sample_rate if isinstance(audio, np.ndarray) else 0.0
+
+        # Create segments from sentences if available
+        segments = []
+        if hasattr(result, 'sentences') and result.sentences:
+            for sentence in result.sentences:
+                seg_text = sentence.text if hasattr(sentence, 'text') else str(sentence)
+                seg_start = sentence.start if hasattr(sentence, 'start') else 0.0
+                seg_end = sentence.end if hasattr(sentence, 'end') else duration
+                segments.append(ParakeetSegment(seg_text, seg_start, seg_end))
+        else:
+            # Single segment with all text
+            segments.append(ParakeetSegment(text, 0.0, duration))
+
+        info = ParakeetTranscriptionInfo(
+            language=language or "en",
+            language_probability=1.0,
+            duration=duration
+        )
+
+        logger.debug(f"Parakeet transcription completed in {elapsed:.3f}s: {text[:100]}...")
+
+        return iter(segments), info
 
 
 class TranscriptionWorker:
@@ -139,34 +319,63 @@ class TranscriptionWorker:
              system_signal.signal(system_signal.SIGINT, system_signal.SIG_IGN)
              __builtins__['print'] = self.custom_print
 
-        logging.info(f"Initializing faster_whisper main transcription model {self.model_path}")
+        # Check if we should use Parakeet MLX model
+        use_parakeet = is_parakeet_model(self.model_path)
 
-        try:
-            model = faster_whisper.WhisperModel(
-                model_size_or_path=self.model_path,
-                device=self.device,
-                compute_type=self.compute_type,
-                device_index=self.gpu_device_index,
-                download_root=self.download_root,
-            )
-            # Create a short dummy audio array, for example 1 second of silence at 16 kHz
-            if self.batch_size > 0:
-                model = BatchedInferencePipeline(model=model)
+        if use_parakeet:
+            logging.info(f"Initializing Parakeet MLX main transcription model {self.model_path}")
+            try:
+                model = ParakeetMLXWrapper(
+                    model_path=self.model_path,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                    device_index=self.gpu_device_index,
+                    download_root=self.download_root,
+                )
 
-            # Run a warm-up transcription
-            current_dir = os.path.dirname(os.path.realpath(__file__))
-            warmup_audio_path = os.path.join(
-                current_dir, "warmup_audio.wav"
-            )
-            warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
-            segments, info = model.transcribe(warmup_audio_data, language="en", beam_size=1)
-            model_warmup_transcription = " ".join(segment.text for segment in segments)
-        except Exception as e:
-            logging.exception(f"Error initializing main faster_whisper transcription model: {e}")
-            raise
+                # Run a warm-up transcription
+                current_dir = os.path.dirname(os.path.realpath(__file__))
+                warmup_audio_path = os.path.join(
+                    current_dir, "warmup_audio.wav"
+                )
+                warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
+                segments, info = model.transcribe(warmup_audio_data, language="en", beam_size=1)
+                model_warmup_transcription = " ".join(segment.text for segment in segments)
+            except Exception as e:
+                logging.exception(f"Error initializing Parakeet MLX transcription model: {e}")
+                raise
 
-        self.ready_event.set()
-        logging.debug("Faster_whisper main speech to text transcription model initialized successfully")
+            self.ready_event.set()
+            logging.debug("Parakeet MLX main speech to text transcription model initialized successfully")
+        else:
+            logging.info(f"Initializing faster_whisper main transcription model {self.model_path}")
+
+            try:
+                model = faster_whisper.WhisperModel(
+                    model_size_or_path=self.model_path,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                    device_index=self.gpu_device_index,
+                    download_root=self.download_root,
+                )
+                # Create a short dummy audio array, for example 1 second of silence at 16 kHz
+                if self.batch_size > 0:
+                    model = BatchedInferencePipeline(model=model)
+
+                # Run a warm-up transcription
+                current_dir = os.path.dirname(os.path.realpath(__file__))
+                warmup_audio_path = os.path.join(
+                    current_dir, "warmup_audio.wav"
+                )
+                warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
+                segments, info = model.transcribe(warmup_audio_data, language="en", beam_size=1)
+                model_warmup_transcription = " ".join(segment.text for segment in segments)
+            except Exception as e:
+                logging.exception(f"Error initializing main faster_whisper transcription model: {e}")
+                raise
+
+            self.ready_event.set()
+            logging.debug("Faster_whisper main speech to text transcription model initialized successfully")
 
         # Start the polling thread
         polling_thread = threading.Thread(target=self.poll_connection)
@@ -783,40 +992,73 @@ class AudioToTextRecorder:
 
         # Initialize the realtime transcription model
         if self.enable_realtime_transcription and not self.use_main_model_for_realtime:
-            try:
-                logger.info("Initializing faster_whisper realtime "
-                             f"transcription model {self.realtime_model_type}, "
-                             f"default device: {self.device}, "
-                             f"compute type: {self.compute_type}, "
-                             f"device index: {self.gpu_device_index}, "
-                             f"download root: {self.download_root}"
-                             )
-                self.realtime_model_type = faster_whisper.WhisperModel(
-                    model_size_or_path=self.realtime_model_type,
-                    device=self.device,
-                    compute_type=self.compute_type,
-                    device_index=self.gpu_device_index,
-                    download_root=self.download_root,
-                )
-                if self.realtime_batch_size > 0:
-                    self.realtime_model_type = BatchedInferencePipeline(model=self.realtime_model_type)
+            # Check if realtime model should use Parakeet MLX
+            use_parakeet_realtime = is_parakeet_model(self.realtime_model_type)
 
-                # Run a warm-up transcription
-                current_dir = os.path.dirname(os.path.realpath(__file__))
-                warmup_audio_path = os.path.join(
-                    current_dir, "warmup_audio.wav"
-                )
-                warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
-                segments, info = self.realtime_model_type.transcribe(warmup_audio_data, language="en", beam_size=1)
-                model_warmup_transcription = " ".join(segment.text for segment in segments)
-            except Exception as e:
-                logger.exception("Error initializing faster_whisper "
-                                  f"realtime transcription model: {e}"
-                                  )
-                raise
+            if use_parakeet_realtime:
+                try:
+                    logger.info("Initializing Parakeet MLX realtime "
+                                 f"transcription model {self.realtime_model_type}"
+                                 )
+                    self.realtime_model_type = ParakeetMLXWrapper(
+                        model_path=self.realtime_model_type,
+                        device=self.device,
+                        compute_type=self.compute_type,
+                        device_index=self.gpu_device_index,
+                        download_root=self.download_root,
+                    )
 
-            logger.debug("Faster_whisper realtime speech to text "
-                          "transcription model initialized successfully")
+                    # Run a warm-up transcription
+                    current_dir = os.path.dirname(os.path.realpath(__file__))
+                    warmup_audio_path = os.path.join(
+                        current_dir, "warmup_audio.wav"
+                    )
+                    warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
+                    segments, info = self.realtime_model_type.transcribe(warmup_audio_data, language="en", beam_size=1)
+                    model_warmup_transcription = " ".join(segment.text for segment in segments)
+                except Exception as e:
+                    logger.exception("Error initializing Parakeet MLX "
+                                      f"realtime transcription model: {e}"
+                                      )
+                    raise
+
+                logger.debug("Parakeet MLX realtime speech to text "
+                              "transcription model initialized successfully")
+            else:
+                try:
+                    logger.info("Initializing faster_whisper realtime "
+                                 f"transcription model {self.realtime_model_type}, "
+                                 f"default device: {self.device}, "
+                                 f"compute type: {self.compute_type}, "
+                                 f"device index: {self.gpu_device_index}, "
+                                 f"download root: {self.download_root}"
+                                 )
+                    self.realtime_model_type = faster_whisper.WhisperModel(
+                        model_size_or_path=self.realtime_model_type,
+                        device=self.device,
+                        compute_type=self.compute_type,
+                        device_index=self.gpu_device_index,
+                        download_root=self.download_root,
+                    )
+                    if self.realtime_batch_size > 0:
+                        self.realtime_model_type = BatchedInferencePipeline(model=self.realtime_model_type)
+
+                    # Run a warm-up transcription
+                    current_dir = os.path.dirname(os.path.realpath(__file__))
+                    warmup_audio_path = os.path.join(
+                        current_dir, "warmup_audio.wav"
+                    )
+                    warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
+                    segments, info = self.realtime_model_type.transcribe(warmup_audio_data, language="en", beam_size=1)
+                    model_warmup_transcription = " ".join(segment.text for segment in segments)
+                except Exception as e:
+                    logger.exception("Error initializing faster_whisper "
+                                      f"realtime transcription model: {e}"
+                                      )
+                    raise
+
+                logger.debug("Faster_whisper realtime speech to text "
+                              "transcription model initialized successfully")
 
         # Setup wake word detection
         if wake_words or wakeword_backend in {'oww', 'openwakeword', 'openwakewords', 'pvp', 'pvporcupine'}:

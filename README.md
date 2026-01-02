@@ -78,6 +78,44 @@ if __name__ == '__main__':
 ```
 *Will type everything being said into your selected text box*
 
+### Voice-Activated Claude Code
+
+Control [Claude Code](https://claude.ai/code) hands-free using voice commands. Speech is transcribed locally on your Mac using Parakeet MLX, then sent to Claude Code's interactive CLI.
+
+#### Quick Start
+
+```bash
+# Run the voice-activated Claude Code interface
+./examples/start_voice_interactive.sh
+```
+
+#### How It Works
+
+1. **Local Speech-to-Text**: Your voice is transcribed on-device using Parakeet MLX (no audio sent to external servers)
+2. **Wake Word Activation**: Say "Claude" followed by your command
+3. **Interactive CLI**: Full Claude Code interface with keyboard + voice input
+4. **PTY Integration**: Uses pseudo-terminal for proper CLI rendering
+
+#### Usage
+
+```
+Say "Claude" followed by your request:
+  "Claude, what files are in this directory?"
+  "Claude, explain this function"
+  "Hey Claude, help me write a test"
+
+Say "Claude exit" or press Ctrl+C to quit
+```
+
+#### Features
+
+- **Hybrid Input**: Use keyboard and voice interchangeably
+- **Full CLI**: Complete Claude Code interface with proper terminal rendering
+- **Privacy**: Voice transcription happens locally on your Mac
+- **Low Latency**: Parakeet MLX provides sub-second transcription
+
+> **Note**: Requires Apple Silicon Mac (M1/M2/M3/M4) and Claude Code CLI installed.
+
 ### Features
 
 - **Voice Activity Detection**: Automatically detects when you start and stop speaking.
@@ -94,7 +132,8 @@ This library uses:
   - [WebRTCVAD](https://github.com/wiseman/py-webrtcvad) for initial voice activity detection.
   - [SileroVAD](https://github.com/snakers4/silero-vad) for more accurate verification.
 - **Speech-To-Text**
-  - [Faster_Whisper](https://github.com/guillaumekln/faster-whisper) for instant (GPU-accelerated) transcription.
+  - [Parakeet MLX](https://github.com/senstella/parakeet-mlx) for Apple Silicon (M1/M2/M3/M4) - uses Metal GPU acceleration
+  - [Faster_Whisper](https://github.com/guillaumekln/faster-whisper) for CUDA/CPU transcription (fallback on non-Apple Silicon)
 - **Wake Word Detection**
   - [Porcupine](https://github.com/Picovoice/porcupine) or [OpenWakeWord](https://github.com/dscripka/openWakeWord) for wake word detection.
 
@@ -126,12 +165,14 @@ sudo apt-get install portaudio19-dev
 Before installing RealtimeSTT please execute:
 
 ```bash
-brew install portaudio
+brew install portaudio ffmpeg
 ```
 
-#### Apple Silicon (M1/M2/M3) Optimization
+> **Note**: `ffmpeg` is required for Parakeet MLX audio processing on Apple Silicon.
 
-For MacBook M1 Pro and other Apple Silicon Macs, RealtimeSTT now defaults to **Parakeet MLX v3** (`mlx-community/parakeet-tdt-0.6b-v3`), which provides significantly better performance than standard Whisper models:
+#### Apple Silicon (M1/M2/M3/M4) Optimization
+
+For Apple Silicon Macs, RealtimeSTT now defaults to **Parakeet MLX** (`mlx-community/parakeet-tdt-0.6b-v3`), which provides significantly better performance than standard Whisper models:
 
 - **Performance**: 50-100x faster than real-time transcription
 - **Latency**: Sub-second response times for voice commands
