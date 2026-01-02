@@ -2,6 +2,7 @@
 
 # RealtimeSTT Installation Script for macOS with Parakeet MLX v3
 # Optimized for Apple Silicon (M1/M2/M3)
+# Uses uv for fast package installation
 
 set -e  # Exit on error
 
@@ -47,7 +48,7 @@ check_macos() {
 
     # Check if Apple Silicon
     if [[ $(uname -m) == "arm64" ]]; then
-        print_success "Apple Silicon detected (M1/M2/M3)"
+        print_success "Apple Silicon detected (M1/M2/M3/M4)"
         export APPLE_SILICON=1
     else
         print_warning "Intel Mac detected - Parakeet MLX may not be optimal"
@@ -58,7 +59,7 @@ check_macos() {
 
 # Check for Homebrew
 check_homebrew() {
-    print_header "Checking Dependencies"
+    print_header "Checking Homebrew"
 
     if ! command -v brew &> /dev/null; then
         print_warning "Homebrew not found. Installing Homebrew..."
@@ -73,12 +74,47 @@ check_homebrew() {
 install_system_deps() {
     print_header "Installing System Dependencies"
 
-    print_info "Installing portaudio..."
-    if brew list portaudio &> /dev/null; then
-        print_success "portaudio already installed"
+    # Array of required brew packages
+    declare -a BREW_PACKAGES=(
+        "portaudio"      # Required for PyAudio
+        "gcc"            # Includes gfortran for scipy
+        "openblas"       # Required for scipy BLAS operations
+        "cmake"          # Build tool for some packages
+        "ffmpeg"         # Required for Parakeet MLX audio loading
+    )
+
+    for pkg in "${BREW_PACKAGES[@]}"; do
+        print_info "Checking $pkg..."
+        if brew list "$pkg" &> /dev/null; then
+            print_success "$pkg already installed"
+        else
+            print_info "Installing $pkg..."
+            brew install "$pkg"
+            print_success "$pkg installed"
+        fi
+    done
+
+    # Set environment variables for scipy/numpy to find openblas
+    export OPENBLAS="$(brew --prefix openblas)"
+    export PKG_CONFIG_PATH="$(brew --prefix openblas)/lib/pkgconfig:$PKG_CONFIG_PATH"
+    export LDFLAGS="-L$(brew --prefix openblas)/lib"
+    export CPPFLAGS="-I$(brew --prefix openblas)/include"
+
+    print_success "Environment variables configured for OpenBLAS"
+}
+
+# Install uv package manager
+install_uv() {
+    print_header "Installing uv Package Manager"
+
+    if command -v uv &> /dev/null; then
+        print_success "uv already installed: $(uv --version)"
     else
-        brew install portaudio
-        print_success "portaudio installed"
+        print_info "Installing uv..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        # Add uv to PATH for current session
+        export PATH="$HOME/.local/bin:$PATH"
+        print_success "uv installed: $(uv --version)"
     fi
 }
 
@@ -87,28 +123,28 @@ check_python() {
     print_header "Checking Python"
 
     if ! command -v python3 &> /dev/null; then
-        print_error "Python 3 not found. Please install Python 3.8 or higher"
+        print_error "Python 3 not found. Please install Python 3.9 or higher"
         exit 1
     fi
 
     PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
     print_success "Python $PYTHON_VERSION found"
 
-    # Check if version is at least 3.8
+    # Check if version is at least 3.9
     MAJOR=$(echo $PYTHON_VERSION | cut -d'.' -f1)
     MINOR=$(echo $PYTHON_VERSION | cut -d'.' -f2)
 
-    if [ "$MAJOR" -lt 3 ] || ([ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 8 ]); then
-        print_error "Python 3.8 or higher required (found $PYTHON_VERSION)"
+    if [ "$MAJOR" -lt 3 ] || ([ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 9 ]); then
+        print_error "Python 3.9 or higher required (found $PYTHON_VERSION)"
         exit 1
     fi
 }
 
-# Create virtual environment
+# Create virtual environment with uv
 setup_venv() {
     print_header "Setting Up Virtual Environment"
 
-    VENV_DIR="venv"
+    VENV_DIR=".venv"
 
     if [ -d "$VENV_DIR" ]; then
         print_warning "Virtual environment already exists"
@@ -124,21 +160,16 @@ setup_venv() {
         fi
     fi
 
-    print_info "Creating virtual environment..."
-    python3 -m venv "$VENV_DIR"
+    print_info "Creating virtual environment with uv..."
+    uv venv "$VENV_DIR"
     print_success "Virtual environment created"
 
     print_info "Activating virtual environment..."
     source "$VENV_DIR/bin/activate"
     print_success "Virtual environment activated"
-
-    # Upgrade pip
-    print_info "Upgrading pip..."
-    pip install --upgrade pip setuptools wheel
-    print_success "pip upgraded"
 }
 
-# Install Python dependencies
+# Install Python dependencies with uv
 install_python_deps() {
     print_header "Installing Python Dependencies"
 
@@ -147,31 +178,34 @@ install_python_deps() {
         exit 1
     fi
 
-    print_info "Installing dependencies from requirements.txt..."
-    print_warning "This may take several minutes..."
+    # Set environment for OpenBLAS (needed for scipy compilation)
+    export OPENBLAS="$(brew --prefix openblas)"
+    export PKG_CONFIG_PATH="$(brew --prefix openblas)/lib/pkgconfig:$PKG_CONFIG_PATH"
+    export LDFLAGS="-L$(brew --prefix openblas)/lib"
+    export CPPFLAGS="-I$(brew --prefix openblas)/include"
 
-    # Install with progress
-    pip install -r requirements.txt
+    print_info "Installing dependencies with uv (this is much faster than pip)..."
+    print_warning "This may still take a few minutes for packages that need compilation..."
+
+    # Use uv pip for installation
+    uv pip install -r requirements.txt
 
     print_success "Python dependencies installed"
 }
 
-# Verify installation
+# Install and verify RealtimeSTT package
 verify_installation() {
-    print_header "Verifying Installation"
+    print_header "Installing RealtimeSTT Package"
 
-    print_info "Checking RealtimeSTT import..."
+    print_info "Installing RealtimeSTT in development mode..."
+    uv pip install -e .
+
+    print_info "Verifying RealtimeSTT import..."
     if python3 -c "from RealtimeSTT import AudioToTextRecorder; print('OK')" 2>/dev/null; then
-        print_success "RealtimeSTT imported successfully"
+        print_success "RealtimeSTT installed and verified"
     else
-        print_warning "Installing RealtimeSTT package..."
-        pip install -e .
-        if python3 -c "from RealtimeSTT import AudioToTextRecorder; print('OK')" 2>/dev/null; then
-            print_success "RealtimeSTT installed and verified"
-        else
-            print_error "Failed to import RealtimeSTT"
-            return 1
-        fi
+        print_error "Failed to import RealtimeSTT"
+        return 1
     fi
 
     if [ "$APPLE_SILICON" -eq 1 ]; then
@@ -181,7 +215,7 @@ verify_installation() {
             print_success "MLX framework available"
         else
             print_warning "MLX not found, installing..."
-            pip install mlx mlx-whisper
+            uv pip install mlx mlx-whisper
             print_success "MLX installed"
         fi
     fi
@@ -232,10 +266,10 @@ def test_import():
     print("Testing imports...")
     try:
         from RealtimeSTT import AudioToTextRecorder
-        print("✓ RealtimeSTT imported successfully")
+        print("  RealtimeSTT imported successfully")
         return True
     except ImportError as e:
-        print(f"✗ Failed to import RealtimeSTT: {e}")
+        print(f"  Failed to import RealtimeSTT: {e}")
         return False
 
 def test_model_config():
@@ -250,13 +284,13 @@ def test_model_config():
         print(f"  Realtime model: {realtime_model}")
 
         if "parakeet" in model.lower():
-            print("✓ Parakeet MLX v3 configured as default")
+            print("  Parakeet MLX v3 configured as default")
             return True
         else:
-            print("⚠ Different model configured")
+            print("  Different model configured")
             return True
     except Exception as e:
-        print(f"✗ Error checking configuration: {e}")
+        print(f"  Error checking configuration: {e}")
         return False
 
 def test_platform():
@@ -268,11 +302,44 @@ def test_platform():
     print(f"  Python: {platform.python_version()}")
 
     if platform.system() == "Darwin" and platform.machine() == "arm64":
-        print("✓ Apple Silicon detected - optimized for MLX")
+        print("  Apple Silicon detected - optimized for MLX")
     else:
-        print("⚠ Not Apple Silicon - consider using different model")
+        print("  Not Apple Silicon - consider using different model")
 
     return True
+
+def test_mlx():
+    """Test MLX framework"""
+    print("\nChecking MLX framework...")
+    try:
+        import mlx.core as mx
+        print(f"  MLX version: {mx.__version__ if hasattr(mx, '__version__') else 'installed'}")
+        # Quick GPU test
+        x = mx.array([1.0, 2.0, 3.0])
+        y = mx.sum(x)
+        mx.eval(y)
+        print("  MLX GPU computation working")
+        return True
+    except ImportError:
+        print("  MLX not installed (required for Apple Silicon)")
+        return False
+    except Exception as e:
+        print(f"  MLX error: {e}")
+        return False
+
+def test_audio():
+    """Test audio libraries"""
+    print("\nChecking audio libraries...")
+    try:
+        import pyaudio
+        p = pyaudio.PyAudio()
+        device_count = p.get_device_count()
+        print(f"  PyAudio working - {device_count} audio devices found")
+        p.terminate()
+        return True
+    except Exception as e:
+        print(f"  PyAudio error: {e}")
+        return False
 
 def main():
     print("=" * 50)
@@ -280,22 +347,40 @@ def main():
     print("=" * 50)
 
     tests = [
-        test_import,
-        test_model_config,
-        test_platform
+        ("Import Test", test_import),
+        ("Model Config", test_model_config),
+        ("Platform Check", test_platform),
+        ("MLX Framework", test_mlx),
+        ("Audio System", test_audio),
     ]
 
-    results = [test() for test in tests]
+    results = []
+    for name, test_fn in tests:
+        try:
+            result = test_fn()
+            results.append((name, result))
+        except Exception as e:
+            print(f"  {name} failed with exception: {e}")
+            results.append((name, False))
 
     print("\n" + "=" * 50)
-    if all(results):
-        print("✓ All tests passed!")
+    print("Test Results:")
+    all_passed = True
+    for name, passed in results:
+        status = "PASS" if passed else "FAIL"
+        symbol = "+" if passed else "-"
+        print(f"  [{symbol}] {name}: {status}")
+        if not passed:
+            all_passed = False
+
+    print("=" * 50)
+    if all_passed:
+        print("All tests passed!")
         print("\nYou can now use RealtimeSTT with Parakeet MLX v3")
         print("\nQuick start:")
         print("  python3 examples/basic_test.py")
     else:
-        print("✗ Some tests failed")
-        print("Please check the errors above")
+        print("Some tests failed - check the errors above")
     print("=" * 50)
 
 if __name__ == "__main__":
@@ -330,7 +415,7 @@ def main():
 
     try:
         recorder = AudioToTextRecorder()
-        print("\n✓ Recorder initialized successfully")
+        print("\n Recorder initialized successfully")
         print("\nModel information:")
         print(f"  Using Apple Silicon optimized Parakeet MLX v3")
         print(f"  Expected latency: <500ms")
@@ -347,15 +432,15 @@ def main():
         print("\n" + "=" * 60)
 
         while True:
-            print("\n🎤 Speak now...")
+            print("\n Speak now...")
             text = recorder.text()
-            print(f"📝 Transcribed: {text}")
+            print(f" Transcribed: {text}")
 
     except KeyboardInterrupt:
         print("\n\nExiting...")
         sys.exit(0)
     except Exception as e:
-        print(f"\n✗ Error: {e}")
+        print(f"\n Error: {e}")
         print("\nTroubleshooting:")
         print("  1. Check microphone permissions in System Settings")
         print("  2. Ensure microphone is working")
@@ -427,22 +512,22 @@ def main():
 
     try:
         recorder = AudioToTextRecorder()
-        print("✓ Voice control ready!")
+        print(" Voice control ready!")
         print("\nSay 'help' for available commands")
         print("Press Ctrl+C to exit\n")
         print("=" * 60)
 
         while True:
-            print("\n🎤 Listening...")
+            print("\n Listening...")
             text = recorder.text()
-            print(f"📝 Heard: {text}")
+            print(f" Heard: {text}")
             execute_command(text)
 
     except KeyboardInterrupt:
         print("\n\nExiting...")
         sys.exit(0)
     except Exception as e:
-        print(f"\n✗ Error: {e}")
+        print(f"\n Error: {e}")
         sys.exit(1)
 
 if __name__ == '__main__':
@@ -455,14 +540,14 @@ EOF
 
 # Print next steps
 print_next_steps() {
-    print_header "Installation Complete! 🎉"
+    print_header "Installation Complete!"
 
     echo -e "${GREEN}RealtimeSTT with Parakeet MLX v3 is ready to use!${NC}\n"
 
     print_info "Next Steps:"
     echo ""
-    echo "1. Activate virtual environment (if you used one):"
-    echo "   ${BLUE}source venv/bin/activate${NC}"
+    echo "1. Activate virtual environment:"
+    echo "   ${BLUE}source .venv/bin/activate${NC}"
     echo ""
     echo "2. Test the installation:"
     echo "   ${BLUE}python3 test_installation.py${NC}"
@@ -473,12 +558,7 @@ print_next_steps() {
     echo "4. Try voice control for Claude Code:"
     echo "   ${BLUE}python3 examples/voice_control.py${NC}"
     echo ""
-    print_info "Documentation:"
-    echo "  - Integration plan: .specify/specs/parakeet-mlx-integration-plan.md"
-    echo "  - Changes summary: .specify/specs/CHANGES_SUMMARY.md"
-    echo "  - Main README: README.md"
-    echo ""
-    print_info "Performance on Apple Silicon M1:"
+    print_info "Performance on Apple Silicon:"
     echo "  - Speed: 50-100x faster than real-time"
     echo "  - Latency: <500ms"
     echo "  - Memory: ~2GB during inference"
@@ -490,11 +570,13 @@ main() {
     clear
     print_header "RealtimeSTT Installation for macOS"
     print_info "Optimized with Parakeet MLX v3 for Apple Silicon"
+    print_info "Using uv for fast package installation"
 
     # Run checks and installation
     check_macos
     check_homebrew
     install_system_deps
+    install_uv
     check_python
     setup_venv
     install_python_deps
