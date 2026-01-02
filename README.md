@@ -16,10 +16,14 @@
 >
 > I will continue to review and merge high-quality, well-written Pull Requests from the community from time to time. Your contributions are welcome and appreciated!
 
-## New
+## New (Fork for macOS + Claude Code)
 
-- 🎤 **Default model changed to [Parakeet MLX v3](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3)** for improved performance on Mac - 50-100x faster than real-time, sub-second latency
-- 🗣️ **Voice-activated Claude Code** - hands-free control via `./examples/start_voice_interactive.sh`
+- 🎤 **Default model: [Parakeet MLX v3](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3)** - 50-100x faster than real-time, sub-second latency on Apple Silicon
+- 🗣️ **Voice-activated Claude Code** - hands-free CLI control via `./examples/start_voice_interactive.sh`
+- 🔊 **Wake words**: Claude, Opus, Sonnet, Haiku (with 40s listening mode)
+- ⌨️ **Simultaneous keyboard + voice input**
+
+### Upstream Features
 - AudioToTextRecorderClient class, which automatically starts a server if none is running and connects to it. The class shares the same interface as AudioToTextRecorder, making it easy to upgrade or switch between the two. (Work in progress, most parameters and callbacks of AudioToTextRecorder are already implemented into AudioToTextRecorderClient, but not all. Also the server can not handle concurrent (parallel) requests yet.)
 - reworked CLI interface ("stt-server" to start the server, "stt" to start the client, look at "server" folder for more info)
 
