@@ -94,17 +94,20 @@ Control [Claude Code](https://claude.ai/code) hands-free using voice commands. S
 #### How It Works
 
 1. **Local Speech-to-Text**: Your voice is transcribed on-device using Parakeet MLX (no audio sent to external servers)
-2. **Wake Word Activation**: Say "Claude" followed by your command
+2. **Wake Word Activation**: Say "Claude", "Opus", "Sonnet", or "Haiku" to activate
 3. **Interactive CLI**: Full Claude Code interface with keyboard + voice input
 4. **PTY Integration**: Uses pseudo-terminal for proper CLI rendering
 
 #### Usage
 
 ```
-Say "Claude" followed by your request:
+Activate with any wake word: "Claude", "Opus", "Sonnet", or "Haiku"
+
+Examples:
   "Claude, what files are in this directory?"
-  "Claude, explain this function"
-  "Hey Claude, help me write a test"
+  "Opus, explain this function"
+  "Hey Sonnet, help me write a test"
+  "Haiku, summarize this file"
 
 Say "Claude exit" or press Ctrl+C to quit
 ```

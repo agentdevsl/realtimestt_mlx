@@ -24,7 +24,12 @@ import tty
 import signal
 
 # Wake phrases that trigger Claude
-WAKE_PHRASES = ["claude", "hey claude", "ok claude", "hi claude"]
+WAKE_PHRASES = [
+    "claude", "hey claude", "ok claude", "hi claude",
+    "opus", "hey opus", "ok opus",
+    "sonnet", "hey sonnet", "ok sonnet",
+    "haiku", "hey haiku", "ok haiku",
+]
 
 # How long to keep listening after wake word (seconds)
 LISTEN_DURATION = 40
